@@ -1,0 +1,2 @@
+# OutlineSmooth
+OutlineSmoothScriptsForUnity
