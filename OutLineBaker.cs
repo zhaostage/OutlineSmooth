@@ -30,7 +30,7 @@ public class OutLineBaker : AssetPostprocessor
         }
         else
         {
-            Debug.Log($"±ØĞë¶Ô.fbxÎÄ¼ş½øĞĞ´Ë²Ù×÷");
+            Debug.Log($"å¿…é¡»å¯¹.fbxæ–‡ä»¶è¿›è¡Œæ­¤æ“ä½œ");
         }
         Debug.Log($"EXT name = {ext}");
 
@@ -40,7 +40,7 @@ public class OutLineBaker : AssetPostprocessor
         if (isCopy)
         {
             string srcPath = path.Replace("copy_@@@", "");
-            Debug.Log($"¸´ÖÆÌåºó´¦Àíºó£¬±¾ÌåµÄpath={srcPath}");
+            Debug.Log($"å¤åˆ¶ä½“åå¤„ç†åï¼Œæœ¬ä½“çš„path={srcPath}");
             AssetDatabase.ImportAsset(srcPath);
         }
 
@@ -76,11 +76,11 @@ public class OutLineBaker : AssetPostprocessor
         {
            // Debug.Log($"Self");
             string copyPath = Path.GetDirectoryName(assetPath) + "/copy_@@@" + Path.GetFileName(assetPath);
-            Debug.Log($"¸´ÖÆÌåµÄPath = {copyPath}");
+            Debug.Log($"å¤åˆ¶ä½“çš„Path = {copyPath}");
             GameObject cGo = AssetDatabase.LoadAssetAtPath<GameObject>(copyPath);
 
-            Dictionary<string, Mesh> dic_name2mesh_src = GetMesh(go);//Ô­±¾Ä£ĞÍµÄ¸÷¸ö×ÓMesh,Í¨¹ı½ÚµãÃûË÷Òı
-            Dictionary<string, Mesh> dic_name2mesh_copy = GetMesh(cGo);//Æ½»¬Ä£ĞÍ¸÷¸ö×ÓMesh,Í¨¹ı½ÚµãÃûË÷Òı
+            Dictionary<string, Mesh> dic_name2mesh_src = GetMesh(go);//åŸæœ¬æ¨¡å‹çš„å„ä¸ªå­Mesh,é€šè¿‡èŠ‚ç‚¹åç´¢å¼•
+            Dictionary<string, Mesh> dic_name2mesh_copy = GetMesh(cGo);//å¹³æ»‘æ¨¡å‹å„ä¸ªå­Mesh,é€šè¿‡èŠ‚ç‚¹åç´¢å¼•
 
             foreach (var item in dic_name2mesh_src) 
             {
@@ -115,15 +115,74 @@ public class OutLineBaker : AssetPostprocessor
 
     Color[] GetColor(Mesh srcMesh,Mesh smthMesh)
     {
-        //°´ÕÕ¶¥µãÎ»ÖÃË÷Òı£¬ºæ±ºĞÅÏ¢
+        //æŒ‰ç…§é¡¶ç‚¹ä½ç½®ç´¢å¼•ï¼Œçƒ˜ç„™ä¿¡æ¯
         int lenSrc = srcMesh.vertices.Length;
         int lenSmth = smthMesh.vertices.Length;
         int maxOverlap = 10;
 
-        NativeArray<Vector3> arr_vert_smth = new(smthMesh.vertices,Allocator.Persistent);//AllocatorÎª×ÊÔ´·ÖÅäµÄ·½Ê½£¬Ò»°ãÑ¡ÔñPersistent
+        NativeArray<Vector3> arr_vert_smth = new(smthMesh.vertices,Allocator.Persistent);//Allocatorä¸ºèµ„æºåˆ†é…çš„æ–¹å¼ï¼Œä¸€èˆ¬é€‰æ‹©Persistent
         NativeArray<Vector3> arr_normal_smth = new(smthMesh.normals, Allocator.Persistent);
 
         NativeArray<UnsafeHashMap<Vector3, Vector3>> arr_vert2normal = new(maxOverlap, Allocator.Persistent);
+        NativeArray<UnsafeHashMap<Vector3, Vector3>.ParallelWriter> arr_vert2normal_writer = new(maxOverlap, Allocator.Persistent);
+
+        for (int i = 0; i < maxOverlap; i++)            
+        {
+            arr_vert2normal[i] = new UnsafeHashMap<Vector3, Vector3>(lenSmth, Allocator.Persistent);
+            arr_vert2normal_writer[i] = arr_vert2normal[i].AsParallelWriter();
+        }
+
+
+        CollectNormalJob collectJob = new()
+        {
+            verts = arr_vert_smth,
+            normals = arr_normal_smth,
+            arr_vert2normal= arr_vert2normal_writer
+        };
+
+        JobHandle collectHandle = collectJob.Schedule(lenSmth, 128);
+        collectHandle.Complete();
+
+
+
+
+        NativeArray<Vector3> arr_vert_src = new(srcMesh.vertices, Allocator.Persistent);
+        NativeArray<Vector3> arr_nor_src = new(srcMesh.normals, Allocator.Persistent);
+        NativeArray<Vector4> arr_tgt_src = new(srcMesh.tangents, Allocator.Persistent);
+
+        NativeArray<Color> arr_color = new(lenSrc, Allocator.Persistent);
+
+        BakeNormalJob bakeJob = new()
+        {
+            normals = arr_nor_src,
+            verts = arr_vert_src,
+            tangents = arr_tgt_src,
+            bakedNormals = arr_vert2normal,
+            colors = arr_color
+
+        };
+
+        JobHandle bakeHandel = bakeJob.Schedule(lenSrc,128);
+        collectHandle.Complete();//çƒ˜ç„™å®Œæˆ
+
+        Color[] cols = new Color[lenSrc];
+        arr_color.CopyTo(cols);
+
+        foreach (var item in arr_vert2normal)
+        {
+            item.Dispose();
+        }
+        arr_vert_smth.Dispose();
+        arr_normal_smth.Dispose();
+        arr_vert2normal.Dispose();
+        arr_vert2normal_writer.Dispose();
+        arr_vert_src.Dispose();
+        arr_nor_src.Dispose();
+        arr_tgt_src.Dispose();
+        arr_color.Dispose();
+
+
+        return cols;
 
 
 
@@ -132,27 +191,94 @@ public class OutLineBaker : AssetPostprocessor
 
 
 
-
-
-        arr_vert_smth.Dispose();//ËùÓĞµÄNativeÏµÁĞÈİÆ÷¶¼²»Ö§³ÖGCËùÓĞĞèÒªÊÖ¶¯Dispose
 
     }
 
     struct CollectNormalJob : IJobParallelFor
     {
-        NativeArray<Vector3> verts;
+        [ReadOnly] public NativeArray<Vector3> verts;
 
-        NativeArray<Vector3> normals;
+        [ReadOnly] public NativeArray<Vector3> normals;
 
 
-        //¶¥µã-·¨ÏßµÄÓ³Éä
-        NativeArray<UnsafeHashMap<Vector3, Vector3>> arr_vert2normal;
+        //é¡¶ç‚¹-æ³•çº¿çš„æ˜ å°„
+        [NativeDisableContainerSafetyRestriction]//è§£é™¤å®‰å…¨é”å®š
+
+
+        //é¡¶ç‚¹-æ³•çº¿
+        public NativeArray<UnsafeHashMap<Vector3, Vector3>.ParallelWriter> arr_vert2normal;//NativeArrayæ˜¯ä¸€ä¸ªå¹³è¡Œå­—å…¸ï¼Œæœ‰ä¸€ä¸ªå®‰å…¨å°è£…ï¼Œä¸€èˆ¬æ˜¯æ— æ³•å†™å…¥çš„ï¼Œæ‰€ä»¥éœ€è¦ä¸€ä¸ª.ParallelWriterçš„å†™å…¥å™¨
         
 
 
         public void Execute(int index)
         {
+            //æ¯æ¬¡æ‰§è¡Œ
+            for (int i = 0; i < arr_vert2normal.Length; i++)
+            {
+                if (i==arr_vert2normal.Length)
+                {
+                    Debug.Log($"è¶…å‡ºé¡¶ç‚¹æ•°é‡");
+                    break;
+                }
+                if (arr_vert2normal[i].TryAdd(verts[index], normals[index]))
+                {
+                    break;
+                } 
+            }
+        }
+    }
 
+    struct BakeNormalJob : IJobParallelFor
+    {
+        //åˆ‡çº¿ç©ºé—´ åˆ‡çº¿ æ³•çº¿ é¡¶ç‚¹ä½ç½® çƒ˜ç„™å¥½çš„æ³•çº¿ è¾“å‡º-é¢œè‰²æ•°ç»„
+        [ReadOnly] public NativeArray<Vector3> normals;
+        [ReadOnly] public NativeArray<Vector3> verts;
+        [ReadOnly] public NativeArray<Vector4> tangents;
+        [ReadOnly][NativeDisableContainerSafetyRestriction] public NativeArray<UnsafeHashMap<Vector3, Vector3>> bakedNormals;
+        public NativeArray<Color> colors;
+
+        public void Execute(int index)
+        {
+            Vector3 newNormal = Vector3.zero;
+
+            for (int i = 0; i < bakedNormals.Length; i++)
+            {
+                if (bakedNormals[i][verts[index]]!= Vector3.zero){
+                    newNormal += bakedNormals[i][verts[index]];
+                }
+                else
+                {
+                    break;
+                }
+            }
+            newNormal = newNormal.normalized;
+
+            //tangentä½œä¸ºVEC4æ•°å€¼ï¼Œé‡Œé¢çš„Wå­˜å‚¨çš„æ˜¯+1æˆ–è€…-1ï¼Œå› ä¸ºopengläºDXåæ ‡ä¸€ä¸ªå·¦æ‰‹ä¸€ä¸ªå³æ‰‹ï¼Œæ‰€ä»¥æ‹¿ZåŒºåˆ†
+            Vector3 bitangent = (Vector3.Cross(normals[index], tangents[index]) * tangents[index].w).normalized;
+
+            Matrix4x4 tbn = new(
+                tangents[index],
+                bitangent,
+                normals[index],
+                Vector4.zero
+                );
+
+            tbn = tbn.transpose;
+
+            Vector3 finalNormal = tbn.MultiplyVector(newNormal).normalized;
+
+            Color col = new(
+
+                finalNormal.x*0.5f+0.5f,
+                finalNormal.y*0.5f+0.5f,
+                finalNormal.z*0.5f+0.5f,
+                1
+
+
+
+                );
+
+            colors[index] = col;
         }
     }
 }
